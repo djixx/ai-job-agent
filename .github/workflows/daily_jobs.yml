@@ -8,7 +8,7 @@ on:
 jobs:
   search-and-filter:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - name: Preuzmi kod iz repozitorijuma
         uses: actions/checkout@v4
