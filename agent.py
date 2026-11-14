@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 from google import genai
 from google.genai import types
 
-# 1. Povezivanje sa Google Sheets
+print("1. Povezivanje sa Google Sheets...")
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
@@ -23,11 +23,22 @@ sh = gc.open_by_key(os.environ["SPREADSHEET_ID"])
 tab_glavni = sh.worksheet("Glavni izbor")
 tab_rezervni = sh.worksheet("Rezervna lista")
 
-# Uzimamo sve već upisane linkove (kolona J je 10. kolona) kako ne bismo duplirali oglase
 existing_links = set(tab_glavni.col_values(10) + tab_rezervni.col_values(10))
+print(f"Uspešno povezano sa tabelom. Već upisano linkova: {len(existing_links)}")
 
-# 2. Inicijalizacija Gemini klijenta
+print("2. Inicijalizacija Gemini klijenta...")
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+# Automatska detekcija aktivnog modela za tvoj API ključ
+ACTIVE_MODEL = "gemini-3.8-flash"
+for candidate in ["gemini-3.8-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]:
+    try:
+        client.models.generate_content(model=candidate, contents="Test")
+        ACTIVE_MODEL = candidate
+        print(f"Aktivan Gemini model: {ACTIVE_MODEL}")
+        break
+    except Exception as e:
+        print(f"Model {candidate} nije dostupan ({e}), probam sledeći...")
 
 SYSTEM_PROMPT = f"""
 Ti si AI asistent za zapošljavanje koji filtrira oglase za Anđelu Blagić.
@@ -62,10 +73,10 @@ Vrati ISKLJUČIVO validan JSON objekat:
 
 
 def analyze_job(title, company, link, description, source):
-    prompt = f"Sajt: {source}\nNaslov: {title}\nKompanija: {company}\nLink: {link}\nOpis oglasa:\n{description[:4000]}"
+    prompt = f"Sajt: {source}\nNaslov: {title}\nKompanija: {company}\nLink: {link}\nOpis oglasa:\n{description[:3500]}"
     try:
         response = client.models.generate_content(
-            model="gemini-3.8-flash",
+            model=ACTIVE_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
@@ -80,6 +91,7 @@ def analyze_job(title, company, link, description, source):
 
 
 def fetch_rss_jobs():
+    print("3. Preuzimam RSS oglase (WeWorkRemotely, Remotive)...")
     feeds = [
         ("WeWorkRemotely", "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss"),
         ("WeWorkRemotely", "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss"),
@@ -89,9 +101,11 @@ def fetch_rss_jobs():
     jobs = []
     for source, url in feeds:
         try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:15]:
+            r = requests.get(url, timeout=(5, 10))
+            feed = feedparser.parse(r.text)
+            for entry in feed.entries[:10]:
                 if entry.link not in existing_links:
+                    existing_links.add(entry.link)
                     soup = BeautifulSoup(entry.get("summary", ""), "html.parser")
                     jobs.append({
                         "source": source,
@@ -101,44 +115,51 @@ def fetch_rss_jobs():
                         "description": soup.get_text(separator=" ", strip=True)
                     })
         except Exception as e:
-            print(f"Greška za RSS {source}: {e}")
+            print(f"Preskačem RSS {source} zbog greške: {e}")
+    print(f"   -> Pronađeno {len(jobs)} novih RSS oglasa.")
     return jobs
 
 
 def fetch_helloworld_jobs():
+    print("4. Preuzimam HelloWorld oglase...")
     urls = [
         "https://www.helloworld.rs/oglasi-za-posao/programiranje",
         "https://www.helloworld.rs/oglasi-za-posao/qa"
     ]
     jobs = []
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     for url in urls:
         try:
-            r = requests.get(url, headers=headers, timeout=15)
+            r = requests.get(url, headers=headers, timeout=(5, 10))
             soup = BeautifulSoup(r.text, "html.parser")
-            for a in soup.select("a[href*='/oglas-za-posao/']")[:15]:
+            for a in soup.select("a[href*='/oglas-za-posao/']")[:10]:
                 href = a.get("href")
                 full_link = href if href.startswith("http") else f"https://www.helloworld.rs{href}"
                 if full_link not in existing_links:
                     existing_links.add(full_link)
-                    job_r = requests.get(full_link, headers=headers, timeout=15)
-                    job_soup = BeautifulSoup(job_r.text, "html.parser")
-                    title = a.get_text(strip=True) or "IT Pozicija"
-                    desc = job_soup.get_text(separator=" ", strip=True)
-                    jobs.append({
-                        "source": "HelloWorld",
-                        "title": title,
-                        "company": "Pogledaj oglas",
-                        "link": full_link,
-                        "description": desc
-                    })
-                    time.sleep(1)
+                    try:
+                        job_r = requests.get(full_link, headers=headers, timeout=(5, 10))
+                        job_soup = BeautifulSoup(job_r.text, "html.parser")
+                        title = a.get_text(strip=True) or "IT Pozicija"
+                        desc = job_soup.get_text(separator=" ", strip=True)
+                        jobs.append({
+                            "source": "HelloWorld",
+                            "title": title,
+                            "company": "Pogledaj oglas",
+                            "link": full_link,
+                            "description": desc
+                        })
+                        time.sleep(0.5)
+                    except Exception:
+                        continue
         except Exception as e:
-            print(f"Greška za HelloWorld: {e}")
+            print(f"Preskačem HelloWorld zbog greške: {e}")
+    print(f"   -> Pronađeno {len(jobs)} novih HelloWorld oglasa.")
     return jobs
 
 
 def fetch_linkedin_jobs():
+    print("5. Preuzimam LinkedIn oglase (poslednjih 7 dana)...")
     queries = [
         ("Junior Software Engineer", "Serbia"),
         ("Full Stack Developer", "Novi Sad, Vojvodina, Serbia"),
@@ -146,13 +167,13 @@ def fetch_linkedin_jobs():
         ("QA Automation", "Serbia")
     ]
     jobs = []
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     for keywords, location in queries:
         url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={requests.utils.quote(keywords)}&location={requests.utils.quote(location)}&f_TPR=r604800&start=0"
         try:
-            r = requests.get(url, headers=headers, timeout=15)
+            r = requests.get(url, headers=headers, timeout=(5, 10))
             soup = BeautifulSoup(r.text, "html.parser")
-            for card in soup.find_all("li")[:10]:
+            for card in soup.find_all("li")[:8]:
                 link_tag = card.find("a", class_="base-card__full-link")
                 if not link_tag:
                     continue
@@ -165,42 +186,47 @@ def fetch_linkedin_jobs():
 
                 job_id = link.split("-")[-1]
                 detail_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
-                detail_r = requests.get(detail_url, headers=headers, timeout=15)
-                detail_soup = BeautifulSoup(detail_r.text, "html.parser")
-                desc_div = detail_soup.find("div", class_="show-more-less-html__markup")
-                desc = desc_div.get_text(separator=" ", strip=True) if desc_div else ""
-
-                jobs.append({
-                    "source": "LinkedIn",
-                    "title": title.get_text(strip=True) if title else keywords,
-                    "company": company.get_text(strip=True) if company else "LinkedIn",
-                    "link": link,
-                    "description": desc
-                })
-                time.sleep(1.5)
+                try:
+                    detail_r = requests.get(detail_url, headers=headers, timeout=(5, 10))
+                    detail_soup = BeautifulSoup(detail_r.text, "html.parser")
+                    desc_div = detail_soup.find("div", class_="show-more-less-html__markup")
+                    desc = desc_div.get_text(separator=" ", strip=True) if desc_div else ""
+                    if desc:
+                        jobs.append({
+                            "source": "LinkedIn",
+                            "title": title.get_text(strip=True) if title else keywords,
+                            "company": company.get_text(strip=True) if company else "LinkedIn",
+                            "link": link,
+                            "description": desc
+                        })
+                except Exception:
+                    continue
+                time.sleep(0.8)
         except Exception as e:
-            print(f"Greška za LinkedIn ({keywords}): {e}")
+            print(f"Preskačem LinkedIn ({keywords}) zbog greške: {e}")
+    print(f"   -> Pronađeno {len(jobs)} novih LinkedIn oglasa.")
     return jobs
 
 
 def main():
-    all_jobs = fetch_helloworld_jobs() + fetch_linkedin_jobs() + fetch_rss_jobs()
-    print(f"Ukupno preuzeto novih oglasa za analizu: {len(all_jobs)}")
+    all_jobs = fetch_rss_jobs() + fetch_helloworld_jobs() + fetch_linkedin_jobs()
+    print(f"\n6. Ukupno za AI analizu: {len(all_jobs)} oglasa.\n")
     today = datetime.now().strftime("%d.%m.%Y.")
 
-    for job in all_jobs:
+    for idx, job in enumerate(all_jobs, start=1):
         if not job["description"]:
             continue
+        print(f"[{idx}/{len(all_jobs)}] Analiziram: {job['source']} - {job['title']}...")
         result = analyze_job(job["title"], job["company"], job["link"], job["description"], job["source"])
         if not result:
-            time.sleep(2)
+            time.sleep(1.5)
             continue
 
         kat = result.get("kategorija")
-        print(f"[{kat}] {job['source']} - {result.get('pozicija', job['title'])} ({result.get('razlog', '')})")
+        print(f"   => Odluka: {kat} | {result.get('razlog', '')}")
 
         if kat == "ODBACI":
-            time.sleep(2)
+            time.sleep(1.5)
             continue
 
         row = [
@@ -221,7 +247,9 @@ def main():
         elif kat == "REZERVNA_QA":
             tab_rezervni.append_row(row, value_input_option="USER_ENTERED")
 
-        time.sleep(4)
+        time.sleep(2.5)
+
+    print("\nZavršeno!")
 
 
 if __name__ == "__main__":
