@@ -60,6 +60,7 @@ Vrati ISKLJUČIVO validan JSON objekat:
 }}
 """
 
+
 def analyze_job(title, company, link, description, source):
     prompt = f"Sajt: {source}\nNaslov: {title}\nKompanija: {company}\nLink: {link}\nOpis oglasa:\n{description[:4000]}"
     try:
@@ -76,6 +77,7 @@ def analyze_job(title, company, link, description, source):
     except Exception as e:
         print(f"Greška pri AI analizi ({link}): {e}")
         return None
+
 
 def fetch_rss_jobs():
     feeds = [
@@ -101,6 +103,7 @@ def fetch_rss_jobs():
         except Exception as e:
             print(f"Greška za RSS {source}: {e}")
     return jobs
+
 
 def fetch_helloworld_jobs():
     urls = [
@@ -134,6 +137,7 @@ def fetch_helloworld_jobs():
             print(f"Greška za HelloWorld: {e}")
     return jobs
 
+
 def fetch_linkedin_jobs():
     queries = [
         ("Junior Software Engineer", "Serbia"),
@@ -144,7 +148,7 @@ def fetch_linkedin_jobs():
     jobs = []
     headers = {"User-Agent": "Mozilla/5.0"}
     for keywords, location in queries:
-        url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={requests.utils.quote(keywords)}&location={requests.utils.quote(location)}&f_TPR=r86400&start=0"
+        url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={requests.utils.quote(keywords)}&location={requests.utils.quote(location)}&f_TPR=r604800&start=0"
         try:
             r = requests.get(url, headers=headers, timeout=15)
             soup = BeautifulSoup(r.text, "html.parser")
@@ -158,8 +162,7 @@ def fetch_linkedin_jobs():
                 existing_links.add(link)
                 title = card.find("h3", class_="base-search-card__title")
                 company = card.find("h4", class_="base-search-card__subtitle")
-                
-                # Uzimamo opis pojedinačnog oglasa
+
                 job_id = link.split("-")[-1]
                 detail_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
                 detail_r = requests.get(detail_url, headers=headers, timeout=15)
@@ -179,21 +182,30 @@ def fetch_linkedin_jobs():
             print(f"Greška za LinkedIn ({keywords}): {e}")
     return jobs
 
+
 def main():
     all_jobs = fetch_helloworld_jobs() + fetch_linkedin_jobs() + fetch_rss_jobs()
+    print(f"Ukupno preuzeto novih oglasa za analizu: {len(all_jobs)}")
     today = datetime.now().strftime("%d.%m.%Y.")
-    
+
     for job in all_jobs:
         if not job["description"]:
             continue
         result = analyze_job(job["title"], job["company"], job["link"], job["description"], job["source"])
-        if not result or result.get("kategorija") == "ODBACI":
+        if not result:
+            time.sleep(2)
+            continue
+
+        kat = result.get("kategorija")
+        print(f"[{kat}] {job['source']} - {result.get('pozicija', job['title'])} ({result.get('razlog', '')})")
+
+        if kat == "ODBACI":
             time.sleep(2)
             continue
 
         row = [
-            "Novo",  # Kolona A: Status (padajući meni)
-            today,   # Kolona B: Datum
+            "Novo",
+            today,
             job["source"],
             result.get("pozicija", job["title"]),
             result.get("kompanija", job["company"]),
@@ -204,12 +216,13 @@ def main():
             job["link"]
         ]
 
-        if result.get("kategorija") == "GLAVNI_IZBOR":
+        if kat == "GLAVNI_IZBOR":
             tab_glavni.append_row(row, value_input_option="USER_ENTERED")
-        elif result.get("kategorija") == "REZERVNA_QA":
+        elif kat == "REZERVNA_QA":
             tab_rezervni.append_row(row, value_input_option="USER_ENTERED")
 
-        time.sleep(4)  # Pauza zbog besplatnog Gemini API rate-limita
+        time.sleep(4)
+
 
 if __name__ == "__main__":
     main()
