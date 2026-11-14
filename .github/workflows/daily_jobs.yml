@@ -1,0 +1,28 @@
+name: Daily AI Job Agent
+
+on:
+  schedule:
+    - cron: '0 7 * * *' # Svakog jutra u 08:00 / 09:00 po našem vremenu
+  workflow_dispatch:    # Omogućava ručno pokretanje na dugme "Run workflow"
+
+jobs:
+  search-and-filter:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preuzmi kod iz repozitorijuma
+        uses: actions/checkout@v4
+
+      - name: Podesi Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instaliraj biblioteke
+        run: pip install -r requirements.txt
+
+      - name: Pokreni AI Job Agenta
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: python agent.py
