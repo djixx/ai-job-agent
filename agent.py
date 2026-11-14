@@ -30,8 +30,8 @@ print("2. Inicijalizacija Gemini klijenta...")
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 # Automatska detekcija aktivnog modela za tvoj API ključ
-ACTIVE_MODEL = "gemini-3.8-flash"
-for candidate in ["gemini-3.8-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]:
+ACTIVE_MODEL = "gemini-3.5-flash-lite"
+for candidate in ["gemini-3.5-flash-lite", "gemini-3.8-flash"]:
     try:
         client.models.generate_content(model=candidate, contents="Test")
         ACTIVE_MODEL = candidate
@@ -74,20 +74,28 @@ Vrati ISKLJUČIVO validan JSON objekat:
 
 def analyze_job(title, company, link, description, source):
     prompt = f"Sajt: {source}\nNaslov: {title}\nKompanija: {company}\nLink: {link}\nOpis oglasa:\n{description[:3500]}"
-    try:
-        response = client.models.generate_content(
-            model=ACTIVE_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                temperature=0.1
+    models_to_try = [ACTIVE_MODEL, "gemini-3.8-flash"] if ACTIVE_MODEL == "gemini-3.5-flash-lite" else [ACTIVE_MODEL, "gemini-3.5-flash-lite"]
+
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    temperature=0.1
+                )
             )
-        )
-        return json.loads(response.text)
-    except Exception as e:
-        print(f"Greška pri AI analizi ({link}): {e}")
-        return None
+            return json.loads(response.text)
+        except Exception as e:
+            if "503" in str(e):
+                print(f"   Model {model_name} trenutno zauzet (503), probam sledeći...")
+                time.sleep(2)
+                continue
+            print(f"Greška pri AI analizi ({link}): {e}")
+            return None
+    return None
 
 
 def fetch_rss_jobs():
@@ -103,7 +111,7 @@ def fetch_rss_jobs():
         try:
             r = requests.get(url, timeout=(5, 10))
             feed = feedparser.parse(r.text)
-            for entry in feed.entries[:10]:
+            for entry in feed.entries[:5]:
                 if entry.link not in existing_links:
                     existing_links.add(entry.link)
                     soup = BeautifulSoup(entry.get("summary", ""), "html.parser")
