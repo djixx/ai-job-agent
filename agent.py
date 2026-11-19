@@ -64,7 +64,7 @@ KATEGORIZACIJA:
 2. "REZERVNA_QA": Junior/Entry QA Automation / SDET / Test Automation / Junior QA Engineer (Playwright, Cypress, Selenium, TypeScript/JS ili automatsko/manuelno testiranje za juniore).
 3. "ODBACI": Sve ostalo.
 
-Vrati ISKLJUČIVO validan JSON objekat:
+Vrati ISKLJUČIVO validan JSON objekat sa dvostrukim navodnicima:
 {{
   "kategorija": "GLAVNI_IZBOR" | "REZERVNA_QA" | "ODBACI",
   "pozicija": "Naziv pozicije",
@@ -94,6 +94,9 @@ def analyze_job(title, company, link, description, source):
                     )
                 )
                 return json.loads(response.text)
+            except json.JSONDecodeError:
+                print(f"   Neispravan JSON odgovor modela za ({link}), preskačem...")
+                return None
             except Exception as e:
                 err_msg = str(e)
                 if "429" in err_msg:
@@ -110,22 +113,21 @@ def analyze_job(title, company, link, description, source):
 
 
 def fetch_rss_jobs():
-    print("3. Preuzimam RSS oglase (Startit Poslovi, WeWorkRemotely, Remotive, WorkingNomads)...")
+    print("3. Preuzimam RSS remote oglase (WeWorkRemotely, Remotive, WorkingNomads, Himalayas)...")
     feeds = [
-        ("Startit Poslovi", "https://poslovi.startit.rs/feed/"),
         ("WeWorkRemotely FullStack", "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss"),
         ("WeWorkRemotely Backend", "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss"),
         ("Remotive Dev", "https://remotive.com/remote-jobs/software-dev/feed"),
         ("Remotive Data", "https://remotive.com/remote-jobs/data/feed"),
-        ("WorkingNomads", "https://www.workingnomads.com/jobs?category=development&format=rss")
+        ("WorkingNomads", "https://www.workingnomads.com/jobs?category=development&format=rss"),
+        ("Himalayas", "https://himalayas.app/jobs/rss")
     ]
     jobs = []
     for source, url in feeds:
         try:
             r = requests.get(url, headers=BROWSER_HEADERS, timeout=(5, 10))
             feed = feedparser.parse(r.text)
-            limit = 15 if "Startit" in source else 6
-            for entry in feed.entries[:limit]:
+            for entry in feed.entries[:6]:
                 if entry.link not in existing_links:
                     existing_links.add(entry.link)
                     soup = BeautifulSoup(entry.get("summary", ""), "html.parser")
@@ -142,11 +144,9 @@ def fetch_rss_jobs():
     return jobs
 
 
-def fetch_serbian_portals():
-    print("4. Preuzimam domaće portale (Infostud, Joberty, HelloWorld)...")
+def fetch_infostud_jobs():
+    print("4. Preuzimam oglase sa Poslovi Infostud...")
     jobs = []
-
-    # A. Infostud IT oglasi
     infostud_urls = [
         "https://poslovi.infostud.com/oglasi-za-posao/it?category%5B0%5D=5",
         "https://poslovi.infostud.com/oglasi-za-posao-novi-sad/it?category%5B0%5D=5"
@@ -155,7 +155,7 @@ def fetch_serbian_portals():
         try:
             r = requests.get(url, headers=BROWSER_HEADERS, timeout=(5, 10))
             soup = BeautifulSoup(r.text, "html.parser")
-            for a in soup.select("a[href*='/posao/']")[:12]:
+            for a in soup.select("a[href*='/posao/']")[:15]:
                 href = a.get("href")
                 full_link = href if href.startswith("http") else f"https://poslovi.infostud.com{href}"
                 full_link = full_link.split("?")[0]
@@ -164,94 +164,31 @@ def fetch_serbian_portals():
                     try:
                         jr = requests.get(full_link, headers=BROWSER_HEADERS, timeout=(5, 10))
                         jsoup = BeautifulSoup(jr.text, "html.parser")
+                        h1 = jsoup.find("h1")
+                        title = h1.get_text(strip=True) if h1 else (a.get_text(strip=True) or "IT Pozicija")
                         desc = jsoup.get_text(separator=" ", strip=True)
                         if len(desc) > 200:
                             jobs.append({
                                 "source": "Infostud",
-                                "title": a.get_text(strip=True) or "IT Pozicija",
+                                "title": title,
                                 "company": "Pogledaj oglas",
                                 "link": full_link,
                                 "description": desc
                             })
-                        time.sleep(0.6)
+                        time.sleep(0.5)
                     except Exception:
                         continue
         except Exception as e:
             print(f"   Infostud preskočen: {e}")
 
-    # B. Joberty
-    joberty_urls = [
-        "https://www.joberty.com/sr/IT-poslovi?seniority=Junior",
-        "https://www.joberty.com/sr/IT-poslovi?seniority=Intern"
-    ]
-    for url in joberty_urls:
-        try:
-            r = requests.get(url, headers=BROWSER_HEADERS, timeout=(5, 10))
-            soup = BeautifulSoup(r.text, "html.parser")
-            for a in soup.select("a[href*='/IT-posao/']")[:10]:
-                href = a.get("href")
-                full_link = href if href.startswith("http") else f"https://www.joberty.com{href}"
-                full_link = full_link.split("?")[0]
-                if full_link not in existing_links:
-                    existing_links.add(full_link)
-                    try:
-                        jr = requests.get(full_link, headers=BROWSER_HEADERS, timeout=(5, 10))
-                        jsoup = BeautifulSoup(jr.text, "html.parser")
-                        desc = jsoup.get_text(separator=" ", strip=True)
-                        if len(desc) > 200:
-                            jobs.append({
-                                "source": "Joberty",
-                                "title": a.get_text(strip=True) or "IT Pozicija",
-                                "company": "Pogledaj oglas",
-                                "link": full_link,
-                                "description": desc
-                            })
-                        time.sleep(0.6)
-                    except Exception:
-                        continue
-        except Exception as e:
-            print(f"   Joberty preskočen: {e}")
-
-    # C. HelloWorld
-    hw_urls = [
-        "https://www.helloworld.rs/oglasi-za-posao/programiranje?senioritet%5B0%5D=1",
-        "https://www.helloworld.rs/oglasi-za-posao/qa?senioritet%5B0%5D=1"
-    ]
-    for url in hw_urls:
-        try:
-            r = requests.get(url, headers=BROWSER_HEADERS, timeout=(5, 10))
-            soup = BeautifulSoup(r.text, "html.parser")
-            for a in soup.select("a[href*='/oglas-za-posao/']")[:10]:
-                href = a.get("href")
-                full_link = href if href.startswith("http") else f"https://www.helloworld.rs{href}"
-                full_link = full_link.split("?")[0]
-                if full_link not in existing_links:
-                    existing_links.add(full_link)
-                    try:
-                        jr = requests.get(full_link, headers=BROWSER_HEADERS, timeout=(5, 10))
-                        jsoup = BeautifulSoup(jr.text, "html.parser")
-                        desc = jsoup.get_text(separator=" ", strip=True)
-                        if len(desc) > 200:
-                            jobs.append({
-                                "source": "HelloWorld",
-                                "title": a.get_text(strip=True) or "IT Pozicija",
-                                "company": "Pogledaj oglas",
-                                "link": full_link,
-                                "description": desc
-                            })
-                        time.sleep(0.6)
-                    except Exception:
-                        continue
-        except Exception as e:
-            print(f"   HelloWorld preskočen: {e}")
-
-    print(f"   -> Pronađeno {len(jobs)} novih oglasa sa domaćih portala.")
+    print(f"   -> Pronađeno {len(jobs)} novih Infostud oglasa.")
     return jobs
 
 
 def fetch_linkedin_jobs():
     print("5. Preuzimam LinkedIn oglase (šire ključne reči, poslednjih 7 dana)...")
     queries = [
+        ("Junior Software Engineer", "Serbia"),
         ("Software Developer", "Serbia"),
         ("Full Stack Developer", "Serbia"),
         ("Frontend Developer", "Serbia"),
@@ -271,7 +208,7 @@ def fetch_linkedin_jobs():
         try:
             r = requests.get(url, headers=BROWSER_HEADERS, timeout=(5, 10))
             soup = BeautifulSoup(r.text, "html.parser")
-            for card in soup.find_all("li")[:12]:
+            for card in soup.find_all("li")[:10]:
                 link_tag = card.find("a", class_="base-card__full-link")
                 if not link_tag:
                     continue
@@ -299,7 +236,7 @@ def fetch_linkedin_jobs():
                         })
                 except Exception:
                     continue
-                time.sleep(0.7)
+                time.sleep(0.6)
         except Exception as e:
             print(f"   Preskačem LinkedIn ({keywords}): {e}")
     print(f"   -> Pronađeno {len(jobs)} novih jedinstvenih LinkedIn oglasa.")
@@ -307,8 +244,11 @@ def fetch_linkedin_jobs():
 
 
 def main():
-    all_jobs = fetch_serbian_portals() + fetch_linkedin_jobs() + fetch_rss_jobs()
-    print(f"\n6. Ukupno za AI analizu: {len(all_jobs)} novih oglasa.\n")
+    all_jobs = fetch_rss_jobs() + fetch_infostud_jobs() + fetch_linkedin_jobs()
+    total_found = len(all_jobs)
+    # Obrađujemo do 35 oglasa po pokretanju da se posao uvek završi za ~5 min bez prekida
+    all_jobs = all_jobs[:35]
+    print(f"\n6. Pronađeno ukupno {total_found} novih oglasa; u ovoj turi analiziram prvih {len(all_jobs)}.\n")
     today = datetime.now().strftime("%d.%m.%Y.")
 
     for idx, job in enumerate(all_jobs, start=1):
@@ -342,7 +282,6 @@ def main():
             elif kat == "REZERVNA_QA":
                 tab_rezervni.append_row(row, value_input_option="USER_ENTERED")
 
-        # Pauza od 4.5s garantuje < 15 zahteva/min i sprečava 429 greške
         time.sleep(4.5)
 
     print("\nZavršeno!")
